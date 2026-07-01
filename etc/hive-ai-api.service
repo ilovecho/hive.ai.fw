@@ -1,0 +1,17 @@
+[Unit]
+Description=Hive.AI.FW API Server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/hive.ai.fw
+Environment=HIVE_AI_HOST=127.0.0.1
+Environment=HIVE_AI_PORT=8600
+Environment=HIVE_AI_TOKEN=CHANGE_ME_SHARED_TOKEN
+ExecStart=/usr/bin/python3 /opt/hive.ai.fw/p00_aiservice.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

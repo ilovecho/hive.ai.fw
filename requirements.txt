@@ -1,0 +1,17 @@
+# Hive.AI.FW — 코어는 Python 3.9+ 표준 라이브러리만 사용 (필수 의존성 없음)
+#
+# 아래는 단계별 선택 의존성. 필요한 것만 주석 해제 후:
+#   pip install -r requirements.txt
+
+# --- 2단계: scikit-learn 모델 추론 ---
+# numpy
+# scikit-learn
+
+# --- 3단계: 엣지(tflite) 추론 ---
+# tflite-runtime
+
+# --- 실 센서 연동 (IoT 드라이버) ---
+# paho-mqtt        # MQTT 구독/발행
+# pyserial         # RS-232/485, Modbus RTU
+# smbus2           # I2C 센서
+# gpiozero         # Raspberry Pi GPIO

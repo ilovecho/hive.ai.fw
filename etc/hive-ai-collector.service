@@ -1,0 +1,16 @@
+[Unit]
+Description=Hive.AI.FW IoT Collector
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/hive.ai.fw
+Environment=HIVE_AI_INTERVAL=10
+Environment=HIVE_AI_RETENTION_DAYS=90
+ExecStart=/usr/bin/python3 /opt/hive.ai.fw/p02_collector.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
