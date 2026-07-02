@@ -9,6 +9,7 @@ p00_aiservice.py — Hive.AI.FW 라우터(진입점)  [Hive.fw s00_s2service.php
   인증  : HIVE_AI_TOKEN 설정 시 X-HIVE-TOKEN 헤더 필수 (public func 제외)
   응답  : {"status": "success"|"error", "data": ...}
   헬스  : GET /health (무인증)
+  화면  : GET /monitor (모니터링), GET /agent (에이전트 관리) — 토큰은 화면에서 입력
 
 환경변수:
   HIVE_AI_HOST  기본 127.0.0.1   (외부 노출 시 반드시 토큰+방화벽)
@@ -24,14 +25,25 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Windows 콘솔/리다이렉트에서도 UTF-8 + 즉시 출력 보장
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from inc.util_service import SERVICES, PUBLIC_FUNCS, HiveError, trace_log
 
 # 서비스 파일 로딩 — 여기 추가하면 자동 등록 (Hive.fw $serviceFiles 대응)
-SERVICE_FILES = ['p01_sensor', 'p01_infer']
+SERVICE_FILES = ['p01_sensor', 'p01_infer', 'p01_device', 'p01_agent']
 for _mod in SERVICE_FILES:
     __import__(_mod)
+
+# GET 으로 서빙하는 관리 화면 (Hive.fw w01_*.html 대응)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PAGES = {
+    '/monitor': 'w01_monitor.html',
+    '/agent': 'w01_agent.html',
+}
 
 HOST = os.environ.get('HIVE_AI_HOST', '127.0.0.1')
 PORT = int(os.environ.get('HIVE_AI_PORT', '8600'))
@@ -55,8 +67,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/health':
             self._reply({'service': 'hive.ai.fw', 'funcs': sorted(SERVICES)})
+        elif self.path in PAGES:
+            self._serve_page(PAGES[self.path])
         else:
             self._reply('not found', 'error', 404)
+
+    def _serve_page(self, filename: str):
+        path = os.path.join(BASE_DIR, filename)
+        try:
+            with open(path, 'rb') as f:
+                body = f.read()
+        except OSError:
+            self._reply('화면 파일이 없습니다: %s' % filename, 'error', 404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         try:
@@ -103,7 +132,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     if not TOKEN and HOST not in ('127.0.0.1', 'localhost', '::1'):
-        print('오류: 외부 바인딩(%s)에는 HIVE_AI_TOKEN 설정이 필수입니다.' % HOST)
+        print('오류: 외부 바인딩(%s)에는 HIVE_AI_TOKEN 설정이 필수입니다.' % HOST, flush=True)
         sys.exit(1)
 
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
@@ -112,7 +141,7 @@ def main():
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print('\n종료합니다.')
+        print('\n종료합니다.', flush=True)
     finally:
         srv.server_close()
 

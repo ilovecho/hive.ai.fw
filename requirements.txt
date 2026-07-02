@@ -3,6 +3,9 @@
 # 아래는 단계별 선택 의존성. 필요한 것만 주석 해제 후:
 #   pip install -r requirements.txt
 
+# --- Claude 분석 에이전트 (p03_ai_agent.py / run_agent_now) ---
+# anthropic
+
 # --- 2단계: scikit-learn 모델 추론 ---
 # numpy
 # scikit-learn

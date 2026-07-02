@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Hive.AI.FW — Claude 분석 에이전트 관리</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; margin: 0; background: #f4f6f8; color: #222; }
+  header { background: #4a2f6f; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .tok { margin-left: auto; font-size: 12px; }
+  main { padding: 16px 20px; max-width: 900px; margin: 0 auto; }
+  section { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: #4a2f6f; }
+  button { padding: 6px 14px; border: 1px solid #4a2f6f; background: #fff; color: #4a2f6f;
+           border-radius: 4px; cursor: pointer; font-size: 13px; margin-right: 6px; }
+  button:hover { background: #4a2f6f; color: #fff; }
+  button.primary { background: #4a2f6f; color: #fff; }
+  .grid { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; align-items: center; }
+  .on { color: #1a8917; font-weight: bold; } .off { color: #c0392b; font-weight: bold; }
+  input, select { padding: 5px 8px; border: 1px solid #ccd; border-radius: 4px; font-size: 13px; }
+  #msg { font-size: 13px; min-height: 18px; }
+  #msg.err { color: #c0392b; } #msg.ok { color: #1a8917; }
+  .result { border: 1px solid #e3e0ee; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #fbfaff; }
+  .result .meta { font-size: 12px; color: #667; margin-bottom: 6px; }
+  .result pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; margin: 0; }
+  .spin { display: none; font-size: 13px; color: #4a2f6f; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 Claude 분석 에이전트 관리</h1>
+  <span class="tok"><a href="/monitor" style="color:#dccff5">← 모니터링</a>&nbsp;&nbsp;
+    <button onclick="setToken()">토큰 설정</button></span>
+</header>
+<main>
+  <div id="msg"></div>
+
+  <section>
+    <h2>에이전트 상태</h2>
+    <div class="grid">
+      <div>활성 상태</div><div id="stEnabled">-</div>
+      <div>데몬 heartbeat</div><div id="stHeartbeat">-</div>
+      <div>마지막 실행</div><div id="stLastRun">-</div>
+      <div>마지막 오류</div><div id="stLastError">-</div>
+      <div>누적 분석 결과</div><div id="stCount">-</div>
+    </div>
+    <p>
+      <button class="primary" onclick="CALL('agent_enable',{},loadStatus)">에이전트 활성화</button>
+      <button onclick="CALL('agent_disable',{},loadStatus)">비활성화</button>
+      <button onclick="runNow()">지금 분석 실행</button>
+      <span class="spin" id="spin">Claude 분석 중...</span>
+    </p>
+  </section>
+
+  <section>
+    <h2>에이전트 설정</h2>
+    <div class="grid">
+      <div>실행 주기(초)</div><div><input type="number" id="cfInterval" min="30" style="width:100px"></div>
+      <div>분석 구간(분)</div><div><input type="number" id="cfWindow" min="1" style="width:100px"></div>
+      <div>Claude 모델</div><div>
+        <select id="cfModel">
+          <option value="claude-opus-4-8">claude-opus-4-8 (기본)</option>
+          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+        </select></div>
+    </div>
+    <p><button class="primary" onclick="saveConfig()">설정 저장</button></p>
+  </section>
+
+  <section>
+    <h2>분석 결과 (최근 10건)</h2>
+    <div id="results">-</div>
+  </section>
+</main>
+
+<script>
+'use strict';
+function getToken() { return sessionStorage.getItem('hive_token') || ''; }
+function setToken() {
+  var t = prompt('서버 토큰(HIVE_AI_TOKEN)을 입력하세요. 토큰 없이 운영 중이면 비워두세요.', getToken());
+  if (t !== null) { sessionStorage.setItem('hive_token', t); refreshAll(); }
+}
+function say(text, ok) {
+  var m = document.getElementById('msg');
+  m.textContent = text || ''; m.className = ok ? 'ok' : 'err';
+}
+function CALL(func, params, cb) {
+  params = params || {}; params.func = func;
+  var body = Object.keys(params).map(function (k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+  }).join('&');
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/', true);
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  if (getToken()) xhr.setRequestHeader('X-HIVE-TOKEN', getToken());
+  xhr.onload = function () {
+    var resp; try { resp = JSON.parse(xhr.responseText); }
+    catch (e) { resp = { status: 'error', data: '응답 해석 실패' }; }
+    if (resp.status === 'success') { say(''); cb(resp.data); }
+    else say('오류: ' + resp.data + (xhr.status === 401 ? ' — [토큰 설정]에서 토큰을 입력하세요.' : ''));
+  };
+  xhr.onerror = function () { say('서버 통신 오류'); };
+  xhr.send(body);
+}
+
+function loadStatus() {
+  CALL('agent_status', {}, function (d) {
+    var en = document.getElementById('stEnabled');
+    en.textContent = d.enabled ? '● 활성' : '○ 비활성';
+    en.className = d.enabled ? 'on' : 'off';
+    var hb = document.getElementById('stHeartbeat');
+    hb.textContent = d.heartbeat ? d.heartbeat : '데몬 미기동 (python p03_ai_agent.py 실행 필요)';
+    hb.className = d.heartbeat ? 'on' : 'off';
+    document.getElementById('stLastRun').textContent = d.last_run || '-';
+    document.getElementById('stLastError').textContent = d.last_error || '없음';
+    document.getElementById('stCount').textContent = d.result_count + '건';
+    document.getElementById('cfInterval').value = d.interval_sec;
+    document.getElementById('cfWindow').value = d.window_min;
+    var sel = document.getElementById('cfModel');
+    if (d.model) {
+      if (![].slice.call(sel.options).some(function (o) { return o.value === d.model; })) {
+        var op = document.createElement('option');
+        op.value = op.textContent = d.model; sel.appendChild(op);
+      }
+      sel.value = d.model;
+    }
+  });
+}
+function saveConfig() {
+  CALL('agent_config', {
+    interval_sec: document.getElementById('cfInterval').value,
+    window_min: document.getElementById('cfWindow').value,
+    model: document.getElementById('cfModel').value
+  }, function () { say('설정이 저장되었습니다. 데몬 다음 사이클부터 반영됩니다.', true); loadStatus(); });
+}
+function runNow() {
+  document.getElementById('spin').style.display = 'inline';
+  CALL('run_agent_now', {}, function (d) {
+    document.getElementById('spin').style.display = 'none';
+    say('분석 완료 (입력 ' + d.input_tokens + ' / 출력 ' + d.output_tokens + ' 토큰)', true);
+    loadStatus(); loadResults();
+  });
+  // 오류 시 스피너 정리
+  setTimeout(function () { document.getElementById('spin').style.display = 'none'; }, 120000);
+}
+function loadResults() {
+  CALL('list_agent_result', { limit: 10 }, function (d) {
+    var wrap = document.getElementById('results'); wrap.textContent = '';
+    if (!d.list.length) { wrap.textContent = '분석 결과가 아직 없습니다.'; return; }
+    d.list.forEach(function (r) {
+      var div = document.createElement('div'); div.className = 'result';
+      var meta = document.createElement('div'); meta.className = 'meta';
+      meta.textContent = '#' + r.oid + ' · ' + r.created + ' · ' + r.model
+        + ' · 구간 ' + r.window_min + '분 · 토큰 ' + r.input_tokens + '/' + r.output_tokens;
+      var pre = document.createElement('pre'); pre.textContent = r.analysis;
+      div.appendChild(meta); div.appendChild(pre); wrap.appendChild(div);
+    });
+  });
+}
+function refreshAll() { loadStatus(); loadResults(); }
+window.addEventListener('DOMContentLoaded', function () {
+  refreshAll();
+  setInterval(loadStatus, 5000);
+});
+</script>
+</body>
+</html>

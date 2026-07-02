@@ -1,0 +1,16 @@
+[Unit]
+Description=Hive.AI.FW Claude Analysis Agent
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/hive.ai.fw
+Environment=ANTHROPIC_API_KEY=CHANGE_ME_API_KEY
+Environment=HIVE_AI_MODEL=claude-opus-4-8
+ExecStart=/usr/bin/python3 /opt/hive.ai.fw/p03_ai_agent.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

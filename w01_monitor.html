@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Hive.AI.FW — 실시간 모니터링</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; margin: 0; background: #f4f6f8; color: #222; }
+  header { background: #1f3a5f; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .tok { margin-left: auto; font-size: 12px; }
+  main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+  section { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: #1f3a5f; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid #e8ecf1; padding: 6px 8px; text-align: left; }
+  th { background: #f0f3f7; }
+  button { padding: 4px 10px; border: 1px solid #1f3a5f; background: #fff; color: #1f3a5f;
+           border-radius: 4px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #1f3a5f; color: #fff; }
+  .state-0 { color: #b58900; font-weight: bold; } .state-1 { color: #1a8917; font-weight: bold; }
+  .state-9 { color: #c0392b; font-weight: bold; }
+  .cards { display: flex; flex-wrap: wrap; gap: 10px; }
+  .card { border: 1px solid #dde3ea; border-radius: 8px; padding: 10px 14px; min-width: 150px; background: #fafbfc; }
+  .card .v { font-size: 22px; font-weight: bold; color: #1f3a5f; }
+  .card .k { font-size: 12px; color: #667; }
+  #msg { color: #c0392b; font-size: 13px; min-height: 18px; }
+  canvas { width: 100%; height: 220px; }
+  select, input[type=number] { padding: 4px 6px; border: 1px solid #ccd; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐝 Hive.AI.FW 실시간 모니터링</h1>
+  <span class="tok"><a href="/agent" style="color:#cfe0f5">에이전트 관리 →</a>&nbsp;&nbsp;
+    <button onclick="setToken()">토큰 설정</button></span>
+</header>
+<main>
+  <div id="msg"></div>
+
+  <section>
+    <h2>디바이스 관리 (승인 / 차단 / 전송주기 제한)</h2>
+    <table>
+      <thead><tr><th>디바이스</th><th>이름</th><th>모델</th><th>상태</th>
+        <th>주기제한(초)</th><th>마지막 수신</th><th>관리</th></tr></thead>
+      <tbody id="devBody"><tr><td colspan="7">불러오는 중...</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>최신 측정값</h2>
+    <div class="cards" id="latestCards">-</div>
+  </section>
+
+  <section>
+    <h2>실시간 추이
+      <select id="selDevice" onchange="loadChart()"></select>
+      <select id="selMetric" onchange="loadChart()">
+        <option value="temperature">temperature</option>
+        <option value="humidity">humidity</option>
+      </select>
+    </h2>
+    <canvas id="chart" width="1000" height="220"></canvas>
+  </section>
+</main>
+
+<script>
+'use strict';
+/* ---- 공통: func 호출 (Hive.fw POST() 대응, X-HIVE-TOKEN 헤더) ---- */
+function getToken() { return sessionStorage.getItem('hive_token') || ''; }
+function setToken() {
+  var t = prompt('서버 토큰(HIVE_AI_TOKEN)을 입력하세요. 토큰 없이 운영 중이면 비워두세요.', getToken());
+  if (t !== null) { sessionStorage.setItem('hive_token', t); refreshAll(); }
+}
+function CALL(func, params, cb) {
+  params = params || {}; params.func = func;
+  var body = Object.keys(params).map(function (k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+  }).join('&');
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/', true);
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  if (getToken()) xhr.setRequestHeader('X-HIVE-TOKEN', getToken());
+  xhr.onload = function () {
+    var resp; try { resp = JSON.parse(xhr.responseText); }
+    catch (e) { resp = { status: 'error', data: '응답 해석 실패' }; }
+    if (resp.status === 'success') { document.getElementById('msg').textContent = ''; cb(resp.data); }
+    else {
+      document.getElementById('msg').textContent = '오류: ' + resp.data
+        + (xhr.status === 401 ? ' — 우측 상단 [토큰 설정]에서 토큰을 입력하세요.' : '');
+    }
+  };
+  xhr.onerror = function () { document.getElementById('msg').textContent = '서버 통신 오류'; };
+  xhr.send(body);
+}
+function esc(v) { return v === null || v === undefined ? '' : String(v); }
+
+/* ---- 디바이스 관리 ---- */
+function loadDevices() {
+  CALL('list_device', {}, function (d) {
+    var tb = document.getElementById('devBody'); tb.textContent = '';
+    if (!d.list.length) {
+      tb.innerHTML = '<tr><td colspan="7">등록된 디바이스가 없습니다. 가상 디바이스(d01_virtual_device.py)를 실행해 보세요.</td></tr>';
+      return;
+    }
+    var sel = document.getElementById('selDevice'), cur = sel.value;
+    sel.textContent = '';
+    d.list.forEach(function (r) {
+      var tr = document.createElement('tr');
+      var cells = [r.device_id, r.name, r.model, '', r.push_interval, r.last_seen];
+      cells.forEach(function (c, i) {
+        var td = document.createElement('td');
+        if (i === 3) { td.textContent = r.state_label; td.className = 'state-' + r.state; }
+        else td.textContent = esc(c);
+        tr.appendChild(td);
+      });
+      var td = document.createElement('td');
+      td.appendChild(btn('승인', function () { act('approve_device', r.device_id); }));
+      td.appendChild(btn('차단', function () { act('block_device', r.device_id); }));
+      td.appendChild(btn('주기설정', function () {
+        var iv = prompt(r.device_id + ' 최소 전송 주기(초), 0=무제한', r.push_interval);
+        if (iv !== null) CALL('config_device', { device_id: r.device_id, push_interval: iv }, loadDevices);
+      }));
+      tr.appendChild(td);
+      tb.appendChild(tr);
+
+      var op = document.createElement('option');
+      op.value = op.textContent = r.device_id;
+      sel.appendChild(op);
+    });
+    if (cur) sel.value = cur;
+    if (!sel.value && sel.options.length) sel.selectedIndex = 0;
+  });
+}
+function btn(label, fn) {
+  var b = document.createElement('button');
+  b.textContent = label; b.onclick = fn; b.style.marginRight = '4px';
+  return b;
+}
+function act(func, id) { CALL(func, { device_id: id }, loadDevices); }
+
+/* ---- 최신 측정값 카드 ---- */
+function loadLatest() {
+  CALL('latest_sensor', {}, function (d) {
+    var wrap = document.getElementById('latestCards'); wrap.textContent = '';
+    if (!d.list.length) { wrap.textContent = '수집된 데이터가 없습니다.'; return; }
+    d.list.forEach(function (r) {
+      var c = document.createElement('div'); c.className = 'card';
+      var v = document.createElement('div'); v.className = 'v'; v.textContent = r.value;
+      var k = document.createElement('div'); k.className = 'k';
+      k.textContent = r.device_id + ' · ' + r.metric + ' · ' + r.created;
+      c.appendChild(v); c.appendChild(k); wrap.appendChild(c);
+    });
+  });
+}
+
+/* ---- 실시간 차트 (무의존 canvas) ---- */
+function loadChart() {
+  var dev = document.getElementById('selDevice').value;
+  var met = document.getElementById('selMetric').value;
+  if (!dev) return;
+  CALL('list_sensor', { device_id: dev, metric: met, limit: 60 }, function (d) {
+    var rows = d.list.slice().reverse();   // 시간 오름차순
+    drawChart(rows.map(function (r) { return r.value; }),
+              rows.map(function (r) { return r.created.slice(11, 19); }));
+  });
+}
+function drawChart(values, labels) {
+  var cv = document.getElementById('chart'), ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (values.length < 2) {
+    ctx.fillStyle = '#889'; ctx.font = '14px sans-serif';
+    ctx.fillText('표시할 데이터가 부족합니다', 20, 40); return;
+  }
+  var pad = 40, W = cv.width - pad * 2, H = cv.height - pad * 2;
+  var min = Math.min.apply(null, values), max = Math.max.apply(null, values);
+  if (max - min < 1) { max += 0.5; min -= 0.5; }
+  function X(i) { return pad + W * i / (values.length - 1); }
+  function Y(v) { return pad + H * (1 - (v - min) / (max - min)); }
+  // 격자 + 축 라벨
+  ctx.strokeStyle = '#e5eaf0'; ctx.fillStyle = '#889'; ctx.font = '11px sans-serif';
+  for (var g = 0; g <= 4; g++) {
+    var gv = min + (max - min) * g / 4, gy = Y(gv);
+    ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(pad + W, gy); ctx.stroke();
+    ctx.fillText(gv.toFixed(1), 4, gy + 4);
+  }
+  ctx.fillText(labels[0], pad, cv.height - 8);
+  ctx.fillText(labels[labels.length - 1], pad + W - 50, cv.height - 8);
+  // 라인
+  ctx.strokeStyle = '#1f6fb2'; ctx.lineWidth = 2; ctx.beginPath();
+  values.forEach(function (v, i) { i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); });
+  ctx.stroke();
+  // 마지막 값 강조
+  var lx = X(values.length - 1), ly = Y(values[values.length - 1]);
+  ctx.fillStyle = '#c0392b';
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillText(values[values.length - 1], lx - 30, ly - 8);
+}
+
+/* ---- 주기 갱신 ---- */
+function refreshAll() { loadDevices(); loadLatest(); loadChart(); }
+window.addEventListener('DOMContentLoaded', function () {
+  refreshAll();
+  setInterval(function () { loadLatest(); loadChart(); }, 3000);  // 실시간 표시
+  setInterval(loadDevices, 10000);
+});
+</script>
+</body>
+</html>

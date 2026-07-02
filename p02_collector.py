@@ -17,6 +17,10 @@ import signal
 import sys
 import time
 
+# Windows 콘솔/리다이렉트에서도 UTF-8 + 즉시 출력 보장
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from inc.db_system import set_sql
@@ -91,7 +95,7 @@ def main():
             if not _running:
                 break
             time.sleep(0.1)
-    print('수집기를 종료합니다.')
+    print('수집기를 종료합니다.', flush=True)
 
 
 if __name__ == '__main__':
